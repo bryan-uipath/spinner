@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stand-up Roulette</title>
+<style>
+  /* Palette sourced from UiPath Apollo "dark" theme tokens (apollo-ui/apollo-core). */
+  :root {
+    --bg: #182027;               /* --color-background */
+    --panel: #273139;            /* --color-background-raised */
+    --border: #526069;           /* --color-border-de-emp */
+    --text: #f4f5f7;             /* --color-foreground */
+    --muted: #a4b1b8;            /* --color-foreground-light */
+    --accent: #ff8f70;           /* --color-foreground-highlight */
+    --accent2: #66adff;          /* --color-primary */
+    /* Apollo elevation shadow tokens */
+    --shadow-dp-2: 0px 1px 5px 0px rgba(0, 0, 0, 0.2), 0px 2px 2px 0px rgba(0, 0, 0, 0.14), 0px 3px 1px -2px rgba(0, 0, 0, 0.12);
+    --shadow-dp-6: 0px 3px 5px -1px rgba(0, 0, 0, 0.2), 0px 6px 10px 0px rgba(0, 0, 0, 0.14), 0px 1px 18px 0px rgba(0, 0, 0, 0.12);
+    --shadow-dp-16: 0px 8px 10px -5px rgba(0, 0, 0, 0.2), 0px 16px 24px 2px rgba(0, 0, 0, 0.14), 0px 6px 30px 5px rgba(0, 0, 0, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 16px 64px;
+  }
+  h1 {
+    font-size: 26px;
+    font-weight: 700;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+
+  .stage {
+    position: relative;
+    width: min(420px, 88vw);
+    height: min(420px, 88vw);
+    margin-bottom: 12px;
+  }
+  canvas {
+    width: 100%; height: 100%; display: block;
+    border-radius: 50%;
+    box-shadow: var(--shadow-dp-16);
+  }
+  .pointer {
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 14px solid transparent;
+    border-right: 14px solid transparent;
+    border-top: 24px solid var(--accent);
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
+    z-index: 2;
+  }
+  .hub {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 3px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text);
+    user-select: none;
+    transition: transform 0.1s ease;
+    box-shadow: var(--shadow-dp-6);
+  }
+  .hub:hover { transform: translate(-50%, -50%) scale(1.06); }
+  .hub:active { transform: translate(-50%, -50%) scale(0.96); }
+  .hub.disabled { opacity: 0.5; cursor: default; }
+
+  .result {
+    height: 44px;
+    font-size: 24px;
+    font-weight: 700;
+    margin: 8px 0 20px;
+    min-height: 30px;
+    text-align: center;
+  }
+  .result .name { color: var(--accent); }
+
+  .controls {
+    width: min(420px, 88vw);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: var(--shadow-dp-2);
+  }
+  .controls summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--muted);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .controls summary::-webkit-details-marker { display: none; }
+  .controls summary::after { content: "▸"; transition: transform 0.15s; }
+  .controls[open] summary::after { transform: rotate(90deg); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  textarea {
+    width: 100%;
+    min-height: 140px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
+    resize: vertical;
+    line-height: 1.6;
+  }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  button.btn {
+    background: var(--accent2);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--shadow-dp-2);
+  }
+  button.btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); box-shadow: none; }
+  button.btn:active { transform: translateY(1px); }
+  .checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+  .checkbox input { width: 16px; height: 16px; accent-color: var(--accent2); }
+  .saved { font-size: 12px; color: var(--muted); margin-left: auto; }
+</style>
+</head>
+<body>
+  <h1>🎯 Stand-up Roulette</h1>
+  <div class="subtitle">Spin to pick who runs scrum.</div>
+
+  <div class="stage">
+    <div class="pointer"></div>
+    <canvas id="wheel" width="800" height="800"></canvas>
+    <div class="hub" id="spinBtn">SPIN</div>
+  </div>
+
+  <div class="result" id="result"></div>
+
+  <details class="controls" id="controls">
+    <summary>Configure names</summary>
+    <label for="names">One name per line</label>
+    <textarea id="names" spellcheck="false"></textarea>
+    <div class="row">
+      <button class="btn" id="saveBtn">Save</button>
+      <button class="btn secondary" id="resetBtn">Reset to defaults</button>
+      <label class="checkbox"><input type="checkbox" id="removeWinner"> Remove winner after spin</label>
+      <span class="saved" id="savedMsg"></span>
+    </div>
+  </details>
+
+<script>
+(function () {
+  "use strict";
+
+  const STORAGE_KEY = "standup-roulette-names";
+  const DEFAULT_NAMES = ["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"];
+  // Apollo dark-theme chart palette (--color-primary, highlight, chart-*).
+  const COLORS = ["#66adff", "#ff8f70", "#74c94b", "#ffbb27", "#b748b6", "#44cffc", "#f25a8c", "#42a1ff"];
+
+  const canvas = document.getElementById("wheel");
+  const ctx = canvas.getContext("2d");
+  const spinBtn = document.getElementById("spinBtn");
+  const resultEl = document.getElementById("result");
+  const namesInput = document.getElementById("names");
+  const saveBtn = document.getElementById("saveBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const savedMsg = document.getElementById("savedMsg");
+  const removeWinner = document.getElementById("removeWinner");
+  const controls = document.getElementById("controls");
+
+  let names = loadNames();
+  let rotation = 0;        // current wheel rotation in radians
+  let spinning = false;
+
+  // ----- persistence -----
+  function loadNames() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      if (Array.isArray(stored) && stored.length) return stored;
+    } catch (e) { /* fall through */ }
+    return DEFAULT_NAMES.slice();
+  }
+  function saveNames(list) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
+  }
+  function parseInput() {
+    return namesInput.value.split("\n").map(s => s.trim()).filter(Boolean);
+  }
+  function flashSaved(text) {
+    savedMsg.textContent = text;
+    setTimeout(() => { savedMsg.textContent = ""; }, 1800);
+  }
+
+  // ----- drawing -----
+  function draw() {
+    const size = canvas.width;
+    const cx = size / 2, cy = size / 2, r = size / 2 - 10;
+    ctx.clearRect(0, 0, size, size);
+
+    if (names.length === 0) {
+      ctx.fillStyle = "#273139";
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#a4b1b8";
+      ctx.font = "28px -apple-system, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("Add some names →", cx, cy);
+      return;
+    }
+
+    const seg = (Math.PI * 2) / names.length;
+    for (let i = 0; i < names.length; i++) {
+      const start = rotation + i * seg;
+      const end = start + seg;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, start, end);
+      ctx.closePath();
+      ctx.fillStyle = COLORS[i % COLORS.length];
+      ctx.fill();
+      ctx.strokeStyle = "rgba(24,32,39,0.6)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // label
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(start + seg / 2);
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold " + Math.max(18, Math.min(34, 320 / names.length + 14)) + "px -apple-system, sans-serif";
+      const label = names[i].length > 16 ? names[i].slice(0, 15) + "…" : names[i];
+      ctx.fillText(label, r - 24, 0);
+      ctx.restore();
+    }
+
+    // outer rim
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = "#526069";
+    ctx.lineWidth = 8;
+    ctx.stroke();
+  }
+
+  // ----- spinning -----
+  // The pointer sits at the top (12 o'clock = -PI/2). The winning segment is
+  // whichever one is under the pointer when the wheel stops.
+  function spin() {
+    if (spinning || names.length === 0) return;
+    spinning = true;
+    spinBtn.classList.add("disabled");
+    spinBtn.textContent = "…";
+    resultEl.innerHTML = "";
+
+    const seg = (Math.PI * 2) / names.length;
+    const winner = Math.floor(Math.random() * names.length);
+
+    // Target rotation so the winner's segment center lands under the top pointer.
+    // Pointer angle is -PI/2. Segment i center (at rotation R) = R + i*seg + seg/2.
+    // Solve R so that center === -PI/2 (mod 2PI), plus several full turns.
+    const turns = 5 + Math.floor(Math.random() * 3);
+    const targetMod = (-Math.PI / 2) - (winner * seg + seg / 2);
+    const current = rotation % (Math.PI * 2);
+    let delta = (targetMod - current) % (Math.PI * 2);
+    if (delta < 0) delta += Math.PI * 2;
+    const totalDelta = turns * Math.PI * 2 + delta;
+
+    const startRotation = rotation;
+    const duration = 4200;
+    let startTime = null;
+
+    function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+    function frame(ts) {
+      if (startTime === null) startTime = ts;
+      const elapsed = ts - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      rotation = startRotation + totalDelta * easeOutCubic(t);
+      draw();
+      if (t < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        rotation = startRotation + totalDelta;
+        draw();
+        finishSpin(winner);
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function finishSpin(winnerIndex) {
+    const winnerName = names[winnerIndex];
+    resultEl.innerHTML = '👉 <span class="name">' + escapeHtml(winnerName) + '</span>';
+    spinning = false;
+    spinBtn.classList.remove("disabled");
+    spinBtn.textContent = "SPIN";
+
+    if (removeWinner.checked && names.length > 1) {
+      names.splice(winnerIndex, 1);
+      saveNames(names);
+      namesInput.value = names.join("\n");
+      // re-render wheel without the removed winner
+      rotation = rotation % (Math.PI * 2);
+      draw();
+    }
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ----- events -----
+  spinBtn.addEventListener("click", spin);
+
+  saveBtn.addEventListener("click", () => {
+    const list = parseInput();
+    if (!list.length) { flashSaved("Need at least one name"); return; }
+    names = list;
+    saveNames(names);
+    rotation = 0;
+    draw();
+    flashSaved("Saved ✓");
+  });
+
+  resetBtn.addEventListener("click", () => {
+    names = DEFAULT_NAMES.slice();
+    namesInput.value = names.join("\n");
+    saveNames(names);
+    rotation = 0;
+    draw();
+    flashSaved("Reset ✓");
+  });
+
+  // ----- init -----
+  namesInput.value = names.join("\n");
+  draw();
+})();
+</script>
+</body>
+</html>

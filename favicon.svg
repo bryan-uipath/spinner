@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Mini spinner wheel in Apollo dark-theme colors -->
+  <circle cx="16" cy="16" r="15" fill="#182027"/>
+  <path d="M16,16 L16,2 A14,14 0 0 1 30,16 Z" fill="#66adff"/>
+  <path d="M16,16 L30,16 A14,14 0 0 1 16,30 Z" fill="#ff8f70"/>
+  <path d="M16,16 L16,30 A14,14 0 0 1 2,16 Z" fill="#74c94b"/>
+  <path d="M16,16 L2,16 A14,14 0 0 1 16,2 Z" fill="#ffbb27"/>
+  <circle cx="16" cy="16" r="4.5" fill="#273139" stroke="#526069" stroke-width="1.5"/>
+</svg>

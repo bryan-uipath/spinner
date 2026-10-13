@@ -161,6 +161,7 @@
   </div>
 
   <div class="result" id="result"></div>
+  <div class="subtitle" id="excludedMsg"></div>
 
   <details class="controls" id="controls">
     <summary>Configure names</summary>
@@ -179,6 +180,7 @@
   "use strict";
 
   const STORAGE_KEY = "standup-roulette-names";
+  const WINNERS_KEY = "standup-roulette-winners"; // { "YYYY-MM-DD": name }, last spin of the day wins
   const DEFAULT_NAMES = ["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"];
   // Apollo dark-theme chart palette (--color-primary, highlight, chart-*).
   const COLORS = ["#66adff", "#ff8f70", "#74c94b", "#ffbb27", "#b748b6", "#44cffc", "#f25a8c", "#42a1ff"];
@@ -193,8 +195,11 @@
   const savedMsg = document.getElementById("savedMsg");
   const removeWinner = document.getElementById("removeWinner");
   const controls = document.getElementById("controls");
+  const excludedMsg = document.getElementById("excludedMsg");
 
   let names = loadNames();
+  let winners = loadWinners();
+  let wheel = [];          // names on the wheel: names minus earlier winners this week
   let rotation = 0;        // current wheel rotation in radians
   let spinning = false;
 
@@ -209,6 +214,33 @@
   function saveNames(list) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
   }
+  function loadWinners() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(WINNERS_KEY));
+      if (stored && typeof stored === "object") return stored;
+    } catch (e) { /* fall through */ }
+    return {};
+  }
+  function dateKey(d) { return d.toLocaleDateString("en-CA"); } // local YYYY-MM-DD
+  // Winners from Mon..yesterday of the current week (weekdays only).
+  function earlierWinnersThisWeek() {
+    const now = new Date();
+    const dayIndex = (now.getDay() + 6) % 7; // Mon = 0
+    const out = new Set();
+    for (let i = 0; i < Math.min(dayIndex, 5); i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayIndex + i);
+      const w = winners[dateKey(d)];
+      if (w) out.add(w);
+    }
+    return out;
+  }
+  function refreshWheel() {
+    const excluded = earlierWinnersThisWeek();
+    wheel = names.filter(n => !excluded.has(n));
+    if (!wheel.length) wheel = names.slice(); // everyone has gone, start over
+    const skipped = names.filter(n => !wheel.includes(n));
+    excludedMsg.textContent = skipped.length ? "Already ran this week: " + skipped.join(", ") : "";
+  }
   function parseInput() {
     return namesInput.value.split("\n").map(s => s.trim()).filter(Boolean);
   }
@@ -219,11 +251,12 @@
 
   // ----- drawing -----
   function draw() {
+    refreshWheel();
     const size = canvas.width;
     const cx = size / 2, cy = size / 2, r = size / 2 - 10;
     ctx.clearRect(0, 0, size, size);
 
-    if (names.length === 0) {
+    if (wheel.length === 0) {
       ctx.fillStyle = "#273139";
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#a4b1b8";
@@ -233,8 +266,8 @@
       return;
     }
 
-    const seg = (Math.PI * 2) / names.length;
-    for (let i = 0; i < names.length; i++) {
+    const seg = (Math.PI * 2) / wheel.length;
+    for (let i = 0; i < wheel.length; i++) {
       const start = rotation + i * seg;
       const end = start + seg;
       ctx.beginPath();
@@ -254,8 +287,8 @@
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.font = "bold " + Math.max(18, Math.min(34, 320 / names.length + 14)) + "px -apple-system, sans-serif";
-      const label = names[i].length > 16 ? names[i].slice(0, 15) + "…" : names[i];
+      ctx.font = "bold " + Math.max(18, Math.min(34, 320 / wheel.length + 14)) + "px -apple-system, sans-serif";
+      const label = wheel[i].length > 16 ? wheel[i].slice(0, 15) + "…" : wheel[i];
       ctx.fillText(label, r - 24, 0);
       ctx.restore();
     }
@@ -272,14 +305,15 @@
   // The pointer sits at the top (12 o'clock = -PI/2). The winning segment is
   // whichever one is under the pointer when the wheel stops.
   function spin() {
-    if (spinning || names.length === 0) return;
+    refreshWheel(); // the day may have rolled over since the last draw
+    if (spinning || wheel.length === 0) return;
     spinning = true;
     spinBtn.classList.add("disabled");
     spinBtn.textContent = "…";
     resultEl.innerHTML = "";
 
-    const seg = (Math.PI * 2) / names.length;
-    const winner = Math.floor(Math.random() * names.length);
+    const seg = (Math.PI * 2) / wheel.length;
+    const winner = Math.floor(Math.random() * wheel.length);
 
     // Target rotation so the winner's segment center lands under the top pointer.
     // Pointer angle is -PI/2. Segment i center (at rotation R) = R + i*seg + seg/2.
@@ -315,14 +349,16 @@
   }
 
   function finishSpin(winnerIndex) {
-    const winnerName = names[winnerIndex];
+    const winnerName = wheel[winnerIndex];
+    winners[dateKey(new Date())] = winnerName;
+    try { localStorage.setItem(WINNERS_KEY, JSON.stringify(winners)); } catch (e) { /* ignore */ }
     resultEl.innerHTML = '👉 <span class="name">' + escapeHtml(winnerName) + '</span>';
     spinning = false;
     spinBtn.classList.remove("disabled");
     spinBtn.textContent = "SPIN";
 
     if (removeWinner.checked && names.length > 1) {
-      names.splice(winnerIndex, 1);
+      names.splice(names.indexOf(winnerName), 1);
       saveNames(names);
       namesInput.value = names.join("\n");
       // re-render wheel without the removed winner

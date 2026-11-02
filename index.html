@@ -183,7 +183,6 @@
     <button class="btn" id="confirmBtn" hidden>Confirm</button>
     <p id="confirmMsg" aria-live="polite"></p>
   </div>
-  <div class="subtitle" id="excludedMsg"></div>
 
   <details class="controls" id="controls">
     <summary>Configure names</summary>
@@ -201,7 +200,6 @@
   "use strict";
 
   const STORAGE_KEY = "standup-roulette-names";
-  const WINNERS_KEY = "standup-roulette-winners"; // { "YYYY-MM-DD": name }, last confirmation of the day wins
   const COUNTS_KEY = "standup-roulette-counts";
   const DEFAULT_NAMES = ["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"];
   // Apollo dark-theme chart palette (--color-primary, highlight, chart-*).
@@ -218,13 +216,11 @@
   const saveBtn = document.getElementById("saveBtn");
   const resetBtn = document.getElementById("resetBtn");
   const savedMsg = document.getElementById("savedMsg");
-  const excludedMsg = document.getElementById("excludedMsg");
 
   let names = loadNames();
-  let winners = loadWinners();
   const counts = loadCounts();
   let pendingWinner = null;
-  let wheel = [];          // names on the wheel: names minus earlier winners this week
+  let wheel = [];          // everyone in the configured name list
   let slices = [];
   let rotation = 0;        // current wheel rotation in radians
   let spinning = false;
@@ -243,13 +239,6 @@
   function saveNames(list) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
   }
-  function loadWinners() {
-    try {
-      const stored = JSON.parse(localStorage.getItem(WINNERS_KEY));
-      if (stored && typeof stored === "object") return stored;
-    } catch (e) { /* fall through */ }
-    return {};
-  }
   function loadCounts() {
     const valid = Object.create(null);
     try {
@@ -262,26 +251,13 @@
     } catch (e) { /* start with zero counts */ }
     return valid;
   }
-  function dateKey(d) { return d.toLocaleDateString("en-CA"); } // local YYYY-MM-DD
-  // Winners from Mon..yesterday of the current week (weekdays only).
-  function earlierWinnersThisWeek() {
-    const now = new Date();
-    const dayIndex = (now.getDay() + 6) % 7; // Mon = 0
-    const out = new Set();
-    for (let i = 0; i < Math.min(dayIndex, 5); i++) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayIndex + i);
-      const w = winners[dateKey(d)];
-      if (w) out.add(w);
-    }
-    return out;
-  }
   function refreshWheel() {
     hideTooltip();
-    const excluded = earlierWinnersThisWeek();
-    wheel = names.filter(n => !excluded.has(n));
-    if (!wheel.length) wheel = names.slice(); // everyone has gone, start over
-    // Normalize inverse counts into the same angles used for drawing and selection.
-    const weights = wheel.map(name => 1 / ((counts[name] || 0) + 1));
+    wheel = names.slice();
+    // Every two turns above the minimum halves a person's weight.
+    // Subtracting the minimum keeps the odds independent of lifetime totals.
+    const fewestTurns = wheel.reduce((minimum, name) => Math.min(minimum, counts[name] || 0), Infinity);
+    const weights = wheel.map(name => 2 ** (-((counts[name] || 0) - fewestTurns) / 2));
     const total = weights.reduce((sum, weight) => sum + weight, 0);
     let angle = 0;
     slices = wheel.map((name, i) => {
@@ -289,8 +265,6 @@
       angle += weights[i] / total * Math.PI * 2;
       return { name, start, end: i === wheel.length - 1 ? Math.PI * 2 : angle };
     });
-    const skipped = names.filter(n => !wheel.includes(n));
-    excludedMsg.textContent = skipped.length ? "Already ran this week: " + skipped.join(", ") : "";
     canvas.setAttribute("aria-label", "Spinner. " + slices.map(slice => slice.name + ": " + turnCount(slice.name) + ", " + landingChance(slice) + " chance of landing").join(". "));
   }
   function parseInput() {
@@ -401,7 +375,7 @@
   // whichever one is under the pointer when the wheel stops.
   function spin() {
     if (spinning) return;
-    refreshWheel(); // the day may have rolled over since the last draw
+    refreshWheel();
     if (wheel.length === 0) return;
     clearPending();
     setSpinning(true);
@@ -456,11 +430,9 @@
     const winnerName = pendingWinner;
     pendingWinner = null;
     counts[winnerName] = (counts[winnerName] || 0) + 1;
-    winners[dateKey(new Date())] = winnerName;
     let persisted = true;
     try {
       localStorage.setItem(COUNTS_KEY, JSON.stringify(counts));
-      localStorage.setItem(WINNERS_KEY, JSON.stringify(winners));
     } catch (e) { persisted = false; }
     confirmBtn.hidden = true;
     confirmMsg.textContent = persisted ? "Confirmed ✓" : "Confirmed for this session. Browser storage is unavailable.";

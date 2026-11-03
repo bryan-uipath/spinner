@@ -87,7 +87,7 @@
   .hub.disabled { opacity: 0.5; cursor: default; }
 
   .result {
-    height: 44px;
+    min-height: 44px;
     font-size: 24px;
     font-weight: 700;
     margin: 8px 0 20px;
@@ -103,6 +103,7 @@
     border-radius: 12px;
     padding: 16px;
     box-shadow: var(--shadow-dp-2);
+    margin-top: 12px;
   }
   .controls summary {
     cursor: pointer;
@@ -145,8 +146,24 @@
   }
   button.btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); box-shadow: none; }
   button.btn:active { transform: translateY(1px); }
-  .checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
-  .checkbox input { width: 16px; height: 16px; accent-color: var(--accent2); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .confirmation { margin-bottom: 12px; text-align: center; }
+  .confirmation p { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .slice-tooltip {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+    max-width: calc(100% - 16px);
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: var(--shadow-dp-6);
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
   .saved { font-size: 12px; color: var(--muted); margin-left: auto; }
 </style>
 </head>
@@ -156,11 +173,16 @@
 
   <div class="stage">
     <div class="pointer"></div>
-    <canvas id="wheel" width="800" height="800"></canvas>
+    <canvas id="wheel" width="800" height="800" role="img"></canvas>
     <div class="hub" id="spinBtn">SPIN</div>
+    <div class="slice-tooltip" id="sliceTooltip" role="tooltip" hidden></div>
   </div>
 
-  <div class="result" id="result"></div>
+  <div class="result" id="result" aria-live="polite"></div>
+  <div class="confirmation">
+    <button class="btn" id="confirmBtn" hidden>Confirm</button>
+    <p id="confirmMsg" aria-live="polite"></p>
+  </div>
 
   <details class="controls" id="controls">
     <summary>Configure names</summary>
@@ -169,7 +191,6 @@
     <div class="row">
       <button class="btn" id="saveBtn">Save</button>
       <button class="btn secondary" id="resetBtn">Reset to defaults</button>
-      <label class="checkbox"><input type="checkbox" id="removeWinner"> Remove winner after spin</label>
       <span class="saved" id="savedMsg"></span>
     </div>
   </details>
@@ -179,6 +200,7 @@
   "use strict";
 
   const STORAGE_KEY = "standup-roulette-names";
+  const COUNTS_KEY = "standup-roulette-counts";
   const DEFAULT_NAMES = ["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"];
   // Apollo dark-theme chart palette (--color-primary, highlight, chart-*).
   const COLORS = ["#66adff", "#ff8f70", "#74c94b", "#ffbb27", "#b748b6", "#44cffc", "#f25a8c", "#42a1ff"];
@@ -187,14 +209,19 @@
   const ctx = canvas.getContext("2d");
   const spinBtn = document.getElementById("spinBtn");
   const resultEl = document.getElementById("result");
+  const confirmBtn = document.getElementById("confirmBtn");
+  const confirmMsg = document.getElementById("confirmMsg");
+  const sliceTooltip = document.getElementById("sliceTooltip");
   const namesInput = document.getElementById("names");
   const saveBtn = document.getElementById("saveBtn");
   const resetBtn = document.getElementById("resetBtn");
   const savedMsg = document.getElementById("savedMsg");
-  const removeWinner = document.getElementById("removeWinner");
-  const controls = document.getElementById("controls");
 
   let names = loadNames();
+  const counts = loadCounts();
+  let pendingWinner = null;
+  let wheel = [];          // everyone in the configured name list
+  let slices = [];
   let rotation = 0;        // current wheel rotation in radians
   let spinning = false;
 
@@ -202,15 +229,90 @@
   function loadNames() {
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
-      if (Array.isArray(stored) && stored.length) return stored;
+      if (Array.isArray(stored)) {
+        const list = [...new Set(stored.filter(n => typeof n === "string").map(n => n.trim()).filter(Boolean))];
+        if (list.length) return list;
+      }
     } catch (e) { /* fall through */ }
     return DEFAULT_NAMES.slice();
   }
   function saveNames(list) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
   }
+  function loadCounts() {
+    const valid = Object.create(null);
+    try {
+      const stored = JSON.parse(localStorage.getItem(COUNTS_KEY));
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+        for (const [name, count] of Object.entries(stored)) {
+          if (Number.isSafeInteger(count) && count >= 0) valid[name] = count;
+        }
+      }
+    } catch (e) { /* start with zero counts */ }
+    return valid;
+  }
+  function refreshWheel() {
+    hideTooltip();
+    wheel = names.slice();
+    // Every two turns above the minimum halves a person's weight.
+    // Subtracting the minimum keeps the odds independent of lifetime totals.
+    const fewestTurns = wheel.reduce((minimum, name) => Math.min(minimum, counts[name] || 0), Infinity);
+    const weights = wheel.map(name => 2 ** (-((counts[name] || 0) - fewestTurns) / 2));
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    let angle = 0;
+    slices = wheel.map((name, i) => {
+      const start = angle;
+      angle += weights[i] / total * Math.PI * 2;
+      return { name, start, end: i === wheel.length - 1 ? Math.PI * 2 : angle };
+    });
+    canvas.setAttribute("aria-label", "Spinner. " + slices.map(slice => slice.name + ": " + turnCount(slice.name) + ", " + landingChance(slice) + " chance of landing").join(". "));
+  }
   function parseInput() {
-    return namesInput.value.split("\n").map(s => s.trim()).filter(Boolean);
+    return [...new Set(namesInput.value.split("\n").map(s => s.trim()).filter(Boolean))];
+  }
+  function turnCount(name) {
+    const count = counts[name] || 0;
+    return count + (count === 1 ? " turn" : " turns");
+  }
+  function landingChance(slice) {
+    const percent = (slice.end - slice.start) / (Math.PI * 2) * 100;
+    return (percent < 0.1 ? "<0.1" : Number(percent.toFixed(1))) + "%";
+  }
+  function hideTooltip() {
+    sliceTooltip.hidden = true;
+  }
+  function showTooltip(event) {
+    if (spinning) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width * canvas.width - canvas.width / 2;
+    const y = (event.clientY - rect.top) / rect.height * canvas.height - canvas.height / 2;
+    const distance = Math.hypot(x, y);
+    if (distance > canvas.width / 2 - 10 || distance < 36 / rect.width * canvas.width) {
+      hideTooltip();
+      return;
+    }
+    const fullTurn = Math.PI * 2;
+    const angle = ((Math.atan2(y, x) - rotation) % fullTurn + fullTurn) % fullTurn;
+    const slice = slices.find(slice => angle >= slice.start && angle < slice.end);
+    if (!slice) { hideTooltip(); return; }
+    sliceTooltip.textContent = slice.name + "\n" + turnCount(slice.name) + "\n" + landingChance(slice) + " chance of landing";
+    sliceTooltip.hidden = false;
+    sliceTooltip.style.left = Math.max(8, Math.min(event.clientX - rect.left + 12, rect.width - sliceTooltip.offsetWidth - 8)) + "px";
+    sliceTooltip.style.top = Math.max(8, Math.min(event.clientY - rect.top + 12, rect.height - sliceTooltip.offsetHeight - 8)) + "px";
+  }
+  function clearPending() {
+    hideTooltip();
+    pendingWinner = null;
+    confirmBtn.hidden = true;
+    confirmMsg.textContent = "";
+    resultEl.innerHTML = "";
+  }
+  function setSpinning(active) {
+    spinning = active;
+    saveBtn.disabled = active;
+    resetBtn.disabled = active;
+    spinBtn.classList[active ? "add" : "remove"]("disabled");
+    spinBtn.textContent = active ? "…" : "SPIN";
   }
   function flashSaved(text) {
     savedMsg.textContent = text;
@@ -223,7 +325,7 @@
     const cx = size / 2, cy = size / 2, r = size / 2 - 10;
     ctx.clearRect(0, 0, size, size);
 
-    if (names.length === 0) {
+    if (wheel.length === 0) {
       ctx.fillStyle = "#273139";
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#a4b1b8";
@@ -233,10 +335,10 @@
       return;
     }
 
-    const seg = (Math.PI * 2) / names.length;
-    for (let i = 0; i < names.length; i++) {
-      const start = rotation + i * seg;
-      const end = start + seg;
+    for (let i = 0; i < wheel.length; i++) {
+      const slice = slices[i];
+      const start = rotation + slice.start;
+      const end = rotation + slice.end;
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       ctx.arc(cx, cy, r, start, end);
@@ -250,12 +352,12 @@
       // label
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.rotate(start + seg / 2);
+      ctx.rotate((start + end) / 2);
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.font = "bold " + Math.max(18, Math.min(34, 320 / names.length + 14)) + "px -apple-system, sans-serif";
-      const label = names[i].length > 16 ? names[i].slice(0, 15) + "…" : names[i];
+      ctx.font = "bold " + Math.max(18, Math.min(34, 320 / wheel.length + 14)) + "px -apple-system, sans-serif";
+      const label = wheel[i].length > 16 ? wheel[i].slice(0, 15) + "…" : wheel[i];
       ctx.fillText(label, r - 24, 0);
       ctx.restore();
     }
@@ -272,20 +374,20 @@
   // The pointer sits at the top (12 o'clock = -PI/2). The winning segment is
   // whichever one is under the pointer when the wheel stops.
   function spin() {
-    if (spinning || names.length === 0) return;
-    spinning = true;
-    spinBtn.classList.add("disabled");
-    spinBtn.textContent = "…";
-    resultEl.innerHTML = "";
+    if (spinning) return;
+    refreshWheel();
+    if (wheel.length === 0) return;
+    clearPending();
+    setSpinning(true);
 
-    const seg = (Math.PI * 2) / names.length;
-    const winner = Math.floor(Math.random() * names.length);
+    const pick = Math.random() * Math.PI * 2;
+    const winner = slices.findIndex(slice => pick < slice.end);
+    const selected = slices[winner];
 
     // Target rotation so the winner's segment center lands under the top pointer.
-    // Pointer angle is -PI/2. Segment i center (at rotation R) = R + i*seg + seg/2.
-    // Solve R so that center === -PI/2 (mod 2PI), plus several full turns.
+    // Solve R so that the slice center is at -PI/2, plus several full turns.
     const turns = 5 + Math.floor(Math.random() * 3);
-    const targetMod = (-Math.PI / 2) - (winner * seg + seg / 2);
+    const targetMod = (-Math.PI / 2) - (selected.start + selected.end) / 2;
     const current = rotation % (Math.PI * 2);
     let delta = (targetMod - current) % (Math.PI * 2);
     if (delta < 0) delta += Math.PI * 2;
@@ -315,20 +417,33 @@
   }
 
   function finishSpin(winnerIndex) {
-    const winnerName = names[winnerIndex];
+    const winnerName = wheel[winnerIndex];
+    pendingWinner = winnerName;
     resultEl.innerHTML = '👉 <span class="name">' + escapeHtml(winnerName) + '</span>';
-    spinning = false;
-    spinBtn.classList.remove("disabled");
-    spinBtn.textContent = "SPIN";
+    setSpinning(false);
+    confirmBtn.hidden = false;
+    confirmMsg.textContent = "Confirm this turn, or spin again to pick someone else.";
+  }
 
-    if (removeWinner.checked && names.length > 1) {
-      names.splice(winnerIndex, 1);
-      saveNames(names);
-      namesInput.value = names.join("\n");
-      // re-render wheel without the removed winner
-      rotation = rotation % (Math.PI * 2);
-      draw();
-    }
+  function confirmWinner() {
+    if (spinning || pendingWinner === null) return;
+    const winnerName = pendingWinner;
+    pendingWinner = null;
+    counts[winnerName] = (counts[winnerName] || 0) + 1;
+    let persisted = true;
+    try {
+      localStorage.setItem(COUNTS_KEY, JSON.stringify(counts));
+    } catch (e) { persisted = false; }
+    confirmBtn.hidden = true;
+    confirmMsg.textContent = persisted ? "Confirmed ✓" : "Confirmed for this session. Browser storage is unavailable.";
+
+    refreshWheel();
+    // Keep the confirmed person under the pointer as the slice sizes change.
+    const confirmedSlice = slices.find(slice => slice.name === winnerName);
+    rotation = confirmedSlice
+      ? -Math.PI / 2 - (confirmedSlice.start + confirmedSlice.end) / 2
+      : rotation % (Math.PI * 2);
+    draw();
   }
 
   function escapeHtml(s) {
@@ -337,21 +452,32 @@
 
   // ----- events -----
   spinBtn.addEventListener("click", spin);
+  confirmBtn.addEventListener("click", confirmWinner);
+  canvas.addEventListener("pointermove", showTooltip);
+  canvas.addEventListener("pointerdown", showTooltip);
+  canvas.addEventListener("pointerleave", hideTooltip);
 
   saveBtn.addEventListener("click", () => {
+    if (spinning) return;
     const list = parseInput();
     if (!list.length) { flashSaved("Need at least one name"); return; }
     names = list;
+    namesInput.value = names.join("\n");
     saveNames(names);
+    clearPending();
+    refreshWheel();
     rotation = 0;
     draw();
     flashSaved("Saved ✓");
   });
 
   resetBtn.addEventListener("click", () => {
+    if (spinning) return;
     names = DEFAULT_NAMES.slice();
     namesInput.value = names.join("\n");
     saveNames(names);
+    clearPending();
+    refreshWheel();
     rotation = 0;
     draw();
     flashSaved("Reset ✓");
@@ -359,6 +485,7 @@
 
   // ----- init -----
   namesInput.value = names.join("\n");
+  refreshWheel();
   draw();
 })();
 </script>

@@ -1,13 +1,15 @@
 # 🎯 Stand-up Roulette
 
-A zero-dependency spinning wheel that randomly picks who runs scrum. Add names, hit **SPIN**, and let the wheel decide.
+A zero-dependency spinning wheel that picks who runs scrum. Add names, hit **SPIN**, and **Confirm** the result when that person takes a turn. Spin again to discard an unconfirmed selection.
 
 **[▶ Live demo](https://bryan-uipath.github.io/spinner/)**
 
 ## Features
 
 - Configurable name list (one per line), persisted in `localStorage`
-- Optional "remove winner after spin" mode for round-robin coverage
+- Per-person confirmed-turn counts, persisted in `localStorage`; hover over a slice to see the person's name, turns, and current chance of landing
+- Weighted slices and selection odds: each person's weight is `2 ** (-(confirmed turns - fewest turns) / 2)`, normalized across everyone on the wheel. Every two extra turns halves their weight; equal counts give equal slices. A four-turn gap gives two people an 80% / 20% split, regardless of their lifetime totals.
+- Everyone in the name list stays eligible on every spin; there are no weekly exclusions.
 - Smooth eased spin animation rendered on `<canvas>`
 - Styled with the UiPath [Apollo](https://github.com/UiPath/apollo-ui) **dark** theme palette
 
@@ -19,6 +21,8 @@ It's a single static file — just open `index.html` in a browser, or serve the 
 python3 -m http.server
 # then visit http://localhost:8000
 ```
+
+Counts are saved per browser and matched by exact name. Removing and re-adding a name, or resetting the name list to defaults, preserves its count. Old daily winner history is ignored; only confirmed turn counts affect the odds.
 
 ## Deploy (GitHub Pages)
 

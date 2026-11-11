@@ -148,6 +148,7 @@
   .checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
   .checkbox input { width: 16px; height: 16px; accent-color: var(--accent2); }
   .saved { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .link-hint { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -161,6 +162,8 @@
   </div>
 
   <div class="result" id="result"></div>
+
+  <div class="link-hint" id="linkHint" hidden>Names from link, not saved</div>
 
   <details class="controls" id="controls">
     <summary>Configure names</summary>
@@ -193,7 +196,10 @@
   const savedMsg = document.getElementById("savedMsg");
   const removeWinner = document.getElementById("removeWinner");
   const controls = document.getElementById("controls");
+  const linkHint = document.getElementById("linkHint");
 
+  let fromLink = false;    // names came from #names=, so nothing is persisted
+  let hashPending = false; // fragment changed mid-spin
   let names = loadNames();
   let rotation = 0;        // current wheel rotation in radians
   let spinning = false;
@@ -207,10 +213,34 @@
     return DEFAULT_NAMES.slice();
   }
   function saveNames(list) {
+    if (fromLink) return;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
   }
   function parseInput() {
     return namesInput.value.split("\n").map(s => s.trim()).filter(Boolean);
+  }
+  // "#names=Ana,Ben%20Lee" -> ["Ana", "Ben Lee"]. A fragment is never sent to the server.
+  function namesFromHash() {
+    if (!location.hash.startsWith("#names=")) return [];
+    const seen = new Set();
+    return location.hash.slice(7).split(",").map(s => {
+      try { return decodeURIComponent(s).trim(); } catch (e) { return s.trim(); }
+    }).filter(n => {
+      const key = n.toLowerCase();
+      if (!n || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  function applyHash() {
+    const linked = namesFromHash();
+    if (!linked.length && !fromLink) return;
+    fromLink = linked.length > 0;
+    names = fromLink ? linked : loadNames();
+    linkHint.hidden = !fromLink;
+    namesInput.value = names.join("\n");
+    rotation = 0;
+    draw();
   }
   function flashSaved(text) {
     savedMsg.textContent = text;
@@ -316,7 +346,10 @@
 
   function finishSpin(winnerIndex) {
     const winnerName = names[winnerIndex];
-    resultEl.innerHTML = '👉 <span class="name">' + escapeHtml(winnerName) + '</span>';
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = winnerName;
+    resultEl.replaceChildren("👉 ", nameEl);
     spinning = false;
     spinBtn.classList.remove("disabled");
     spinBtn.textContent = "SPIN";
@@ -329,10 +362,7 @@
       rotation = rotation % (Math.PI * 2);
       draw();
     }
-  }
-
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    if (hashPending) { hashPending = false; applyHash(); }
   }
 
   // ----- events -----
@@ -345,7 +375,7 @@
     saveNames(names);
     rotation = 0;
     draw();
-    flashSaved("Saved ✓");
+    flashSaved(fromLink ? "Applied, not saved" : "Saved ✓");
   });
 
   resetBtn.addEventListener("click", () => {
@@ -354,12 +384,17 @@
     saveNames(names);
     rotation = 0;
     draw();
-    flashSaved("Reset ✓");
+    flashSaved(fromLink ? "Reset, not saved" : "Reset ✓");
+  });
+
+  window.addEventListener("hashchange", () => {
+    if (spinning) hashPending = true; else applyHash();
   });
 
   // ----- init -----
   namesInput.value = names.join("\n");
   draw();
+  applyHash();
 })();
 </script>
 </body>

@@ -20,6 +20,18 @@ python3 -m http.server
 # then visit http://localhost:8000
 ```
 
+## Open with names
+
+Pass a comma-separated list in the URL fragment:
+
+```
+index.html#names=Ana,Ben%20Lee,Chen
+```
+
+- Used for that visit only; never written to `localStorage`, so the saved list is untouched (Save, Reset and "remove winner" also skip storage while the link list is active).
+- A fragment is not sent to the server, so names stay on the machine.
+- URL-encode each name (`%20` space, `%2C` comma). Blanks and case-insensitive duplicates are dropped.
+
 ## Deploy (GitHub Pages)
 
 The repo serves `index.html` from the root, so no build step is needed:

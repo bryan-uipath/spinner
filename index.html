@@ -392,9 +392,9 @@
   });
 
   // ----- init -----
+  applyHash(); // first, so a bad stored list cannot break a link visit
   namesInput.value = names.join("\n");
   draw();
-  applyHash();
 })();
 </script>
 </body>
